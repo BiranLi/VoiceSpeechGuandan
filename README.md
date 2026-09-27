@@ -92,6 +92,20 @@ OpenGuanDan 在轮到你时下发：
 
 ## 实施计划
 
+完整计划与逐阶段验收标准见 **[docs/plan.md](./docs/plan.md)**，需求列表与需求验收标准见 **[docs/requirements.md](./docs/requirements.md)**。
+
+阶段划分对齐 skill 的 6 步，另加 S0 基线固化与 S6 回归：
+
+| 阶段 | 名称 | 主要产出 |
+|---|---|---|
+| S0 | 基线固化 | 质量门基线、单测脚手架 |
+| S1 | ASR 本地代理端点 | `POST /api/asr`（6677 同源） |
+| S2 | 浏览器录音模块 | `src/lib/voice/recorder.ts` |
+| S3 | VAD 自动收音 | 开口即录、静音 900ms 自动提交 |
+| S4 | 领域指令解析器 | `src/lib/voice/parseCommand.ts`（**工作量最大**） |
+| S5 | 回合循环 + UI/无障碍 | 单一守卫函数 `armVoiceTurn()` |
+| S6 | 测试与回归 | 三层测试全绿 |
+
 按 `board-game-voice-asr` skill 的 6 步：
 
 1. 本地代理端点 —— `guandan-windows/vite.config.ts` 固定 port 6677 且已有 proxy 配置，加 `configureServer` 中间件即可（Node 18+ 全局 fetch 重写技能的 Python 实现，Key 只进 `process.env.DASHSCOPE_API_KEY`）
