@@ -3,6 +3,8 @@
 
 # 依赖与构建产物
 node_modules/
+__pycache__/
+*.py[cod]
 dist/
 build/
 release/
