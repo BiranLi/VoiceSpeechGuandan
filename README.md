@@ -19,18 +19,25 @@
 游戏 AI 应手 → 暂停收音 → 轮回玩家 → 自动恢复收音
 ```
 
-## 依赖的上游项目（submodule）
+## 依赖的上游项目
 
 | 路径 | 上游 | License | 角色 |
 |---|---|---|---|
-| `third_party/guandan-windows` | [dengweiqh/guandan-windows](https://github.com/dengweiqh/guandan-windows) | Apache-2.0 | **接入目标**：掼蛋游戏本体，浏览器端可玩 |
-| `third_party/OpenGuanDan` | [GameAI-NJUPT/OpenGuanDan](https://github.com/GameAI-NJUPT/OpenGuanDan) | 无 license | **设计参考 + 规则对照床**：纯 Java 服务端，WebSocket JSON 协议 |
+| `guandan-windows/` | [dengweiqh/guandan-windows](https://github.com/dengweiqh/guandan-windows) | Apache-2.0 | **接入目标**：掼蛋游戏本体，**已 vendor 进本仓库自行维护** |
+| `third_party/OpenGuanDan` | [GameAI-NJUPT/OpenGuanDan](https://github.com/GameAI-NJUPT/OpenGuanDan) | 无 license | **设计参考 + 规则对照床**：纯 Java 服务端，WebSocket JSON 协议（保留为 submodule） |
 
-```bash
-git clone --recurse-submodules git@github.com:BiranLi/VoiceSpeechGuandan.git
-# 已 clone 但漏了 submodule：
-git submodule update --init --recursive
-```
+### `guandan-windows/` 为何是 vendor 而非 submodule
+
+ASR 接入必然要改它的 `src/store/gameStore.ts` / `src/lib/rules.ts` 并新增 `src/lib/voice/*`。用 submodule 时父仓库无法记录这些改动（会卡在 detached HEAD 上），因此改为 vendor：代码在本仓库内直接提交、改动可追溯、构建无需额外 `--recurse-submodules`。
+
+- 上游快照：`dengweiqh/guandan-windows@600c175`（2026-04-26，128 文件，Apache-2.0）
+- `LICENSE` 原样保留（上游无 NOTICE 文件），满足 Apache-2.0 的署名与声明义务
+- 其自带 `.gitignore` 随之生效（只忽略构建产物/日志/编辑器文件，不影响源码），其中的 `*.local` 规则额外保护了 `.env.local`
+- 同步上游：`git -C /tmp/gwsrc pull && git -C /tmp/gwsrc checkout <新commit>` 后覆盖文件并核对差异
+
+### `third_party/OpenGuanDan` 为何仍是 submodule
+
+它 35MB 中绝大部分是 `.jar` / `.exe` / linux 二进制，且**无 license、Jar 部分无源码**，只作规则对照使用。vendor 会把 35MB 冗余二进制灌进本仓库，得不偿失，故保留 submodule。
 
 ## 为什么选 guandan-windows 作为接入目标
 
@@ -87,10 +94,10 @@ OpenGuanDan 在轮到你时下发：
 
 按 `board-game-voice-asr` skill 的 6 步：
 
-1. 本地代理端点 —— `vite.config.ts` 固定 port 6677 且已有 proxy 配置，加 `configureServer` 中间件即可（Node 18+ 全局 fetch 重写技能的 Python 实现，Key 只进 `process.env.DASHSCOPE_API_KEY`）
-2. 浏览器录音模块 —— 新建 `src/lib/voice/recorder.ts`
+1. 本地代理端点 —— `guandan-windows/vite.config.ts` 固定 port 6677 且已有 proxy 配置，加 `configureServer` 中间件即可（Node 18+ 全局 fetch 重写技能的 Python 实现，Key 只进 `process.env.DASHSCOPE_API_KEY`）
+2. 浏览器录音模块 —— 新建 `guandan-windows/src/lib/voice/recorder.ts`
 3. VAD 自动收音 —— 同文件内 RMS 状态机，阈值 0.02 / 静音 900ms / 最短 150ms / 最长 6000ms
-4. 领域解析器 —— 新建 `src/lib/voice/parseCommand.ts`，**工作量最大**，采用上述候选集求交集
+4. 领域解析器 —— 新建 `guandan-windows/src/lib/voice/parseCommand.ts`，**工作量最大**，采用上述候选集求交集
 5. 回合制收音循环 —— 挂在 `isMyTurn` 同一判据上；AI 回合与识别失败都必须恢复收音
 6. 测试 —— `tsc --noEmit` / eslint；e2e 用 macOS `say` 生成掼蛋语音
 
@@ -102,6 +109,6 @@ OpenGuanDan 在轮到你时下发：
 - 游戏页面必须经 HTTP 服务器访问（麦克风权限依赖），不支持 `file://` 直开 —— 因此 `guandan-windows` 的 Electron 产物需显式关闭语音入口（其 `base: './'` 正是为 `file://` 打包所设）
 - 识别文本直接信任前必须过游戏规则校验
 
-## License 注意
+## License
 
-`third_party/guandan-windows` 为 Apache-2.0，可修改。`third_party/OpenGuanDan` **无 license 文件且 Java 部分仅有编译好的 jar、无源码**，仅作参考与对照使用，不做二次开发或分发。
+`guandan-windows/` 为 Apache-2.0（`LICENSE` 原样保留），可自由修改与分发。`third_party/OpenGuanDan` **无 license 文件且 Java 部分仅有编译好的 jar、无源码**，仅作参考与对照使用，不做二次开发或分发。
