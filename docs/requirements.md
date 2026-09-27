@@ -27,14 +27,36 @@
 | 概念 | 代码锚点 |
 |---|---|
 | 人类出牌入口 | `src/store/gameStore.ts` → `playCards(action: PlayAction)`、`passTurn(playerId)` |
-| 出牌合法性校验 | `src/lib/rules.ts` → `canPlay(cards, lastPlay)`、`getPlayInfo(cards)`、`getPlayInfos(cards)` |
+| 出牌合法性校验 | `src/lib/rules.ts` → `canPlay(cards, lastPlay)` |
+| **牌型分类器** | `src/lib/rules.ts` → `getPlayInfos(cards)` / `getPlayInfo(cards)` |
+| **全量走法枚举**（解析器候选集来源） | `src/lib/ai.ts` → `generateAllPlays(hand)`（已导出） |
+| AI 推荐候选（**解析器不适用**，见 S4） | `src/lib/ai.ts` → `getPossiblePlays(hand, lastPlay, difficulty)` |
 | 回合判定 | `src/components/game/HandArea.tsx` → `isMyTurn = currentTurn === 'p1' && status === 'playing'` |
 | 手牌 | `src/types/game.ts` → `GameState.players[p1].hand: Card[]` |
 | 牌型枚举 | `src/types/game.ts` → `PlayType`（11 值） |
 | AI 回合调度 | `src/pages/GameBoard.tsx` → `useEffect` 内 `status==='playing'` + `setTimeout` + `requestDecision` |
 | 本地开发服务器 | `vite.config.ts` → `server.port: 6677`、`strictPort: true`、已有 `/socket.io` proxy |
 | 现成牌型语音表 | `src/lib/audio.ts` → `AudioManager.voiceFiles` |
-| 质量门 | `package.json` → `npm run check`（`tsc -b --noEmit`）、`npm run lint` |
+| 牌堆约定 | `src/lib/deck.ts` → 双副牌 108 张；级牌=15、小王=16、大王=17；逢人配=红桃级牌 |
+| 质量门 | `package.json` → `npm run check`（`tsc -b --noEmit`）、`npm run lint`、`npm test`（vitest） |
+
+### 0.4 已由测试钉死的规则引擎契约
+
+以下结论来自 `guandan-windows/test/rules.characterization.test.ts`（45 例）与
+`test/parser-contract.test.ts`（20 例），**已全部通过**，是 S4 实现的依据：
+
+| 事实 | 证据 |
+|---|---|
+| `getPlayInfos` 是**分类器**（“这组牌构成什么牌型”），传整副 27 张手牌返回 `[]` | 用例「传入整副手牌不会枚举出所有走法，而是返回空」 |
+| 枚举器是 `generateAllPlays(hand)`，合法性由 `canPlay` 过滤 | 契约测试 `legalCandidates()` |
+| `generateAllPlays` 按**点数多重集去重**：3 张 K 只产出 1 个对子（非 C(3,2)=3 种花色组合） | 用例「三张同点数时，对子只有 1 个候选」 |
+| 火箭需**恰好 4 张王**（双副牌共 4 张）；2 张王不构成火箭 | 用例「2 张王不构成火箭」 |
+| 非逢人配的级牌**不能参与顺子/连对/钢板** | 用例「非逢人配的级牌不能参与顺子」 |
+| 逢人配会产生**多个候选**（同一组牌可得 Straight + StraightFlush） | 用例「逢人配会让 getPlayInfos 返回多个候选牌型」 |
+| `getPlayInfo` 优先返回炸弹/同花顺/火箭，否则取 `maxValue` 最大解释 | 用例「逢人配场景下优先返回高级牌型」 |
+| 炸弹 `maxValue = 张数*1000 + 点数`；同花顺 `maxValue = 5500 + 最大牌` | 实测值 4003 / 5507 |
+| 同张数炸弹按点数比大小（四A 压 四3） | 用例「同张数炸弹按点数比大小」 |
+| `getPossiblePlays` 会**分组压缩**且**与 AI 难度耦合**（master 硬上限 355/391） | 用例组「getPossiblePlays：为何解析器不直接用它」 |
 
 ---
 
@@ -112,11 +134,16 @@ CHUNK_SAMPLES: 2048,    // 16kHz 下 ≈128ms/块
 parseCommand(state, text)
   ① 清理归一  去标点/空白（ASR 常带句号），同音字白名单映射
   ② 语法拆解  拆出 (牌型, 点数, 张数)
-  ③ 状态定位  结合 players.p1.hand 缩小范围
-  ④ 候选生成  用 getPlayInfos(hand) 枚举当前所有合法动作
-  ⑤ 交集兜底  识别结果 ∩ 合法集合；通过才返回指令
+  ③ 候选生成  generateAllPlays(players.p1.hand) 全量枚举走法
+  ④ 合法性过滤 canPlay(play, lastValidPlay) 滤掉压不动的
+  ⑤ 文本匹配  对候选集按 (牌型, 点数) 过滤；命中 0→error，1→执行，>1→消歧
   任何一步失败 → return {error: "玩家能看懂的中文原因"}
 ```
+
+> ⚠️ **设计更正（由测试发现）**：本需求原写作“用 `getPlayInfos(hand)` 枚举所有合法动作”，
+> 该假设**错误**。`getPlayInfos` 是分类器，传整副手牌返回 `[]`。已改为
+> `generateAllPlays(hand).filter(p => canPlay(p, lastPlay))`。
+> 详见 §0.4。
 
 **v1 指令词表**（牌型名取自 `PlayType` 枚举，与 `AudioManager.voiceFiles` 已有的语音键一致）
 
@@ -142,14 +169,17 @@ parseCommand(state, text)
 |---|---|---|
 | FR-4.1 | 解析器**必须感知实时手牌**——同一文本在不同手牌下产出不同动作 | 单测：两种手牌分别喂 `"对K"`，断言动作不同 |
 | FR-4.2 | 识别结果必须过规则校验才返回，非法组合绝不执行 | 单测：`"三带K"` 但手牌无三张 K → 返回 error，`playCards` **未被调用** |
-| FR-4.3 | 歧义消解依据牌桌实际状态，不依据文本 | 单测：手牌 3 张 K 时 `"对K"` → 返回多候选或明确 error，不静默任选 |
+| FR-4.3 | 歧义消解依据牌桌实际状态 | 单测：候选集多命中时返回多候选或明确 error，不静默任选 |
+| FR-4.3a | 候选集来源为 `generateAllPlays` + `canPlay`，**不得**用 `getPossiblePlays` | 代码审查 + `test/parser-contract.test.ts` |
+| FR-4.3b | 候选集在 27 张手牌上 **< 500ms** 完成（含逐项 `getPlayInfo` 分类） | `npm run test:contract` 性能用例 |
 | FR-4.4 | 每条失败路径返回结构化 `{error}`，**绝不静默丢弃** | 代码审查 + 单测断言 error 非空 |
 | FR-4.5 | 错误文案说明"为什么"和"怎么办"，并回显识别原文 | 断言文案含原文，如 `无法解析「飞象过河」（应说：牌型+点数，如 对K / 三带5 / 过）` |
 | FR-4.6 | 支持"过/不要/不出/pass"四种说法，均触发 `passTurn('p1')` | 单测 4 例 |
 | FR-4.7 | 支持带句号/标点的输入（ASR 常带） | 单测：`"对K。"` 与 `"对K"` 结果一致 |
 | FR-4.8 | 成功返回结构化动作（含目标 `Card[]` 与 `PlayType`），供 `playCards` 消费 | 单测断言返回形状 |
-| FR-4.9 | 级牌逢人配：v1 显式**不支持**并给出明确提示，不产生错误出牌 | 单测：构造含级牌的牌型 → 返回引导性 error |
+| FR-4.9 | 级牌逢人配：候选集天然覆盖；v1 不做**口语级**级牌消歧，报错引导 | 单测：构造含级牌牌型 → 返回引导性 error |
 | FR-4.10 | 成功与失败两条路径最终都汇入既有入口（`playCards`/`passTurn`），游戏核心逻辑零改动 | 代码审查 `git diff`：无对 `gameStore.ts` 的改动 |
+| FR-4.11 | 点数不可压时给出**可行动**引导（例："对K 压不过对A，可说：过 / 炸弹"） | 单测：跟对A 时说"对K"，断言 error 含可行动建议 |
 
 ### FR-5 回合制收音状态机
 
@@ -244,7 +274,19 @@ parseCommand(state, text)
 | NFR-6.1 | 新增/修改代码**零** TS 错误 | `npm run check` 的错误数不超过基线 3，且不含本次涉及文件 |
 | NFR-6.2 | `npm run lint` 无新增 error | `npm run lint` |
 | NFR-6.3 | `npm run build` 成功 | 实跑 |
-| NFR-6.4 | 基线 3 个错误记入文档，不静默遗留 | 本文档 §NFR-6 |
+| NFR-6.4 | `npm test` 全绿 | 实跑 |
+| NFR-6.5 | 基线 3 个错误记入文档，不静默遗留 | 本文档 §NFR-6 |
+
+### NFR-8 测试左移（Test-First）
+
+测试不集中在最后阶段，而是**每个阶段的测试与其实现一同先于实现存在**。
+
+| 编号 | 验收项 | 验证方式 |
+|---|---|---|
+| NFR-8.1 | 依赖的**上游/既有**行为先被特征测试钉死，再写实现 | 本文档 §0.4 已由 65 个通过的测试固定 |
+| NFR-8.2 | 每个实现阶段开工前，其测试用例**已存在且失败**（红） | 阶段评审：先提测试 commit |
+| NFR-8.3 | 测试不得为了“变绿”而降低断言强度 | code review：断言不得从具体值放宽为 truthy |
+| NFR-8.4 | 发现的错误假设必须回写规格文档，不得只修代码 | 本文档 §FR-4 的设计更正即为范例 |
 
 ### NFR-7 运行环境约束
 
@@ -263,13 +305,14 @@ parseCommand(state, text)
 | FR-1 | `vad-recording.md` 按钮只作模式开关 | S2 | FR-1.3 / FR-1.4 |
 | FR-2 | `vad-recording.md` VAD 参数与状态机 | S2, S3 | FR-2.2 / FR-2.3 / FR-2.5 |
 | FR-3 | `server-proxy.md` + SKILL 第 1 步 | S1 | FR-3.2 / FR-3.3 |
-| FR-4 | `notation-parser.md` 五步模式 | S4 | FR-4.1 / FR-4.2 / FR-4.9 |
+| FR-4 | `notation-parser.md` 五步模式 | S4 | FR-4.1 / FR-4.2 / FR-4.3a |
 | FR-5 | `ux-turn-flow.md` 接线清单 | S5 | FR-5.1 / FR-5.3 / FR-5.4 |
 | FR-6 | `ux-turn-flow.md` 无障碍 UX | S5 | FR-6.1 / FR-6.3 |
 | NFR-1 | SKILL 红线 | S1 | NFR-1.1 / NFR-1.3 |
 | NFR-2 | SKILL 核心理念 1 | S4, S5 | NFR-2.1 / NFR-2.2 |
 | NFR-6 | SKILL 第 6 步 | 全程 | NFR-6.1 |
 | NFR-7 | SKILL 红线 | S2 | NFR-7.2 |
+| NFR-8 | 测试左移 | S0, 全程 | NFR-8.2 / NFR-8.4 |
 
 ---
 
@@ -278,7 +321,9 @@ parseCommand(state, text)
 一个阶段判定为"完成"须**同时**满足：
 
 1. 该阶段全部验收项通过；
-2. `npm run check` 错误数不超基线（NFR-6.1）；
-3. `npm run build` 成功；
-4. 键盘/鼠标路径未受影响（NFR-2.1）；
-5. 提交信息说明改了什么、为什么、怎么验收。
+2. 该阶段的测试先于实现存在（NFR-8.2），且现已全绿；
+3. `npm run check` 错误数不超基线（NFR-6.1）；
+4. `npm run test` 全绿（NFR-6.4）；
+5. `npm run build` 成功；
+6. 键盘/鼠标路径未受影响（NFR-2.1）；
+7. 提交信息说明改了什么、为什么、怎么验收。

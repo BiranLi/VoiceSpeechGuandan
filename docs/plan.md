@@ -5,43 +5,60 @@
 
 ## 阶段总览
 
-| 阶段 | 名称 | 对应 skill 步骤 | 依赖 | 产出 |
-|---|---|---|---|---|
-| S0 | 基线固化 | — | — | 质量门基线记录、单测脚手架 |
-| S1 | ASR 本地代理端点 | 第 1 步 | S0 | `POST /api/asr` 可用 |
-| S2 | 浏览器录音模块 | 第 2 步 | S0 | `recorder.ts` + 麦克风会话 |
-| S3 | VAD 自动收音 | 第 3 步 | S2 | 开口即录、静音自动提交 |
-| S4 | 领域指令解析器 | 第 4 步 | S1 | 文本 → 合法动作（工作量最大） |
-| S5 | 回合循环 + UI/无障碍 | 第 5 步 | S3, S4 | 完整可用闭环 |
-| S6 | 测试与回归 | 第 6 步 | S1–S5 | 三层测试全绿 |
+| 阶段 | 名称 | 对应 skill 步骤 | 依赖 | 测试先于实现 | 产出 |
+|---|---|---|---|---|---|
+| S0 | 基线固化 + 测试骨架 | — | — | — | 质量门基线、vitest、牌工厂、65 个已通过的测试 |
+| S1 | ASR 本地代理端点 | 第 1 步 | S0 | ✅ 先写契约测试 | `POST /api/asr` 可用 |
+| S2 | 浏览器录音模块 | 第 2 步 | S0 | ✅ 先写编码单测 | `recorder.ts` + 麦克风会话 |
+| S3 | VAD 自动收音 | 第 3 步 | S2 | ✅ 先写状态机单测 | 开口即录、静音自动提交 |
+| S4 | 领域指令解析器 | 第 4 步 | S1 | ✅ 契约测试**已建** | 文本 → 合法动作（工作量最大） |
+| S5 | 回合循环 + UI/无障碍 | 第 5 步 | S3, S4 | ✅ 先写守卫单测 | 完整可用闭环 |
+| S6 | e2e 与回归收口 | 第 6 步 | S1–S5 | — | 真实语音 e2e + 全量回归 |
 
 **关键路径**：S0 → S1/S2 → S3 → S4 → S5 → S6。S1 与 S2 可并行。
 
+## 测试左移原则（贯穿全程）
+
+每个阶段的**测试先于实现存在**。具体要求见 `requirements.md` NFR-8：
+
+1. 依赖的**既有/上游**行为，先用特征测试钉死（已在 S0 完成 65 例）；
+2. 开工前先提一个**测试 commit（红）**，再提实现 commit（绿）；
+3. 不得为“变绿”而降低断言强度；
+4. 测试发现的错误假设**必须回写规格文档**（S4 的设计更正即由此而来）。
+
 ---
 
-## S0 · 基线固化
+## S0 · 基线固化 + 测试骨架 ✅ 已完成
 
-**目标**：在任何改动前把"什么叫通过"钉死，避免把上游缺陷误算成自己的回归。
+**目标**：在任何实现改动前把“什么叫通过”钉死，并建立可执行的测试底座。
 
-**前置**：无
+**已产出**
+- `guandan-windows/vitest.config.ts`（独立配置，不动上游 `vite.config.ts`）
+- `guandan-windows/test/helpers/cards.ts`（牌工厂，对齐 `deck.ts`：级牌=15、小王=16、大王=17、大小王各 2 张）
+- `guandan-windows/test/rules.characterization.test.ts`（**45 例**）
+- `guandan-windows/test/parser-contract.test.ts`（**20 例**）
+- `package.json` 新增 `test` / `test:watch` / `test:rules` / `test:contract`
 
-**改动文件**
-- 新增 `docs/baseline.md`：记录当前 `npm run check` / `npm run lint` / `npm run build` 的真实输出
-- 新增 `test/` 目录与 `package.json` scripts（`test:vad`、`test:parser`）
+**验收标准（实测结果）**
 
-**验收标准**
-
-| 编号 | 验收项 | 命令 | 期望 |
+| 编号 | 验收项 | 命令 | 实测 |
 |---|---|---|---|
-| S0.1 | 类型检查基线已记录 | `npm run check` | 恰好 3 个错误，全在 `src/lib/ai.ts` 1226/1301/1328（TS2322），**0 个其他** |
+| S0.1 | 类型检查基线已记录 | `npm run check` | 恰好 3 个错误，全在 `src/lib/ai.ts` 1226/1301/1328（TS2322） |
 | S0.2 | 错误归属已确证为上游自带 | `diff -q <upstream>/src/lib/ai.ts src/lib/ai.ts` | 逐字节一致 |
-| S0.3 | lint 基线已记录 | `npm run lint` | 记录 error/warning 数 |
-| S0.4 | 构建基线可用 | `npm run build` | exit 0 |
-| S0.5 | 开发服务器可启动 | `npm run dev` | 监听 6677，页面可玩到出牌 |
+| S0.3 | 测试代码零 TS 错误 | `npm run check` | `test/` 与 `vitest.config.ts` 无报错 |
+| S0.4 | 测试全绿 | `npm test` | **65 passed**（45 特征 + 20 契约） |
+| S0.5 | 性能预算已测 | `npm run test:contract` | 27 张手牌「枚举+过滤+分类」< 500ms |
 
-**出口条件**：基线数字写入 `docs/baseline.md` 并提交。后续每阶段以"错误数 ≤ 基线且不涉及本次文件"为门槛。
+**本阶段的关键产出：两个设计错误已被测试证伪**
 
-**风险**：`npm run dev` 的 `strictPort: true`——6677 被占用会直接启动失败，先 `lsof -i :6677` 确认。
+1. **`getPlayInfos` 不是枚举器**——它是“这组牌构成什么牌型”的分类器，
+   传入整副 27 张手牌返回 `[]`。原 S4 设计因此作废，
+   改用 `generateAllPlays(hand).filter(p => canPlay(p, lastPlay))`。
+2. **`getPossiblePlays` 不可用作合法性依据**——它按 `(type,maxValue,length)`
+   分组压缩、且与 AI 难度耦合（master 硬上限 355/391）。它是“推荐棋”选择器，不是“全部合法走法”。
+
+**另一个意外收获**：`generateAllPlays` 按**点数多重集去重**（3 张 K 只产出 1 个对子），
+因此语音“对K”天然唯一，**不需要在花色层面消歧**——比原估计简单。
 
 ---
 
@@ -50,6 +67,8 @@
 **目标**：`POST /api/asr` 在游戏同源端口可用，Key 只在服务端。
 
 **前置**：S0
+
+**测试先行**：先提 `test/asr-proxy.contract.test.ts`（红），验收项 S1.1–S1.8 以该文件为准。
 
 **改动文件**
 - `guandan-windows/vite.config.ts`：新增 `configureServer` 中间件（**不改**已有 `server.port`/`strictPort`/`proxy` 配置）
@@ -170,13 +189,30 @@ energyThreshold: 0.02, silenceMs: 900, minSpeechMs: 150, maxSpeechMs: 6000, CHUN
 
 **前置**：S1
 
-**改动文件**
-- 新增 `guandan-windows/src/lib/voice/parseCommand.ts`
-- 新增 `test/test_parser.js`
+**测试先行**：`test/parser-contract.test.ts`（20 例）**已在 S0 建好并全绿**，
+它固定了本阶段所依赖的全部规则引擎契约（见 `requirements.md` §0.4）。
+实现阶段只需新增 `test/parser.test.ts`（针对解析器本身的用例），先红后绿。
 
 **核心设计：候选集求交集**（借鉴 `OpenGuanDan` 的 `actionList`）
 
-`OpenGuanDan` 服务端在轮到你时下发**当前局面所有合法动作的枚举**，客户端只需按 index 回选。本项目等价物是 `getPlayInfos(hand)`：
+```text
+识别文本 → ①清理归一 → ②语法拆解(牌型,点数)
+   → ③generateAllPlays(players.p1.hand)   全量枚举
+   → ④.filter(canPlay(p, lastValidPlay))  合法性过滤
+   → ⑤对候选集按 (牌型, 点数) 过滤：0→error / 1→执行 / >1→消歧
+```
+
+> ⚠️ **设计更正**：原写作“用 `getPlayInfos(hand)` 枚举所有合法动作”，已被 S0 的特征测试证伪。
+> `getPlayInfos` 是分类器（传整副手牌返回 `[]`），且 `getPossiblePlays` 会剪枝并耦合 AI 难度。
+> 正确来源是 `generateAllPlays` + `canPlay`（见 FR-4.3a）。
+
+**改动文件**
+- 新增 `guandan-windows/src/lib/voice/parseCommand.ts`
+- 新增 `guandan-windows/test/parser.test.ts`
+
+**核心设计：候选集求交集**（借鉴 `OpenGuanDan` 的 `actionList`）
+
+`OpenGuanDan` 服务端在轮到你时下发**当前局面所有合法动作的枚举**，客户端只需按 index 回选。本项目等价物是 `generateAllPlays` + `canPlay`：
 
 ```text
 识别文本 → ①清理归一 → ②语法拆解(牌型,点数) → ③结合 hand 定位
@@ -192,17 +228,19 @@ energyThreshold: 0.02, silenceMs: 900, minSpeechMs: 150, maxSpeechMs: 6000, CHUN
 |---|---|---|---|
 | S4.1 | 感知实时手牌 | 单测：两种手牌喂 `"对K"` | 产出不同动作 |
 | S4.2 | 规则校验兜底 | 单测：`"三带K"` 但无三张 K | 返回 error，`playCards` **未被调用** |
-| S4.3 | 歧义按牌桌消解 | 单测：手牌 3 张 K 时说 `"对K"` | 返回多候选或明确 error，**不静默任选** |
+| S4.3 | 歧义按牌桌消解 | 单测：候选集多命中时 | 返回多候选或明确 error，**不静默任选** |
+| S4.3a | 候选集来源正确 | 代码审查 + 契约测试 | 用 `generateAllPlays`+`canPlay`，**不用** `getPossiblePlays` |
+| S4.3b | 候选集性能 | `npm run test:contract` | 27 张手牌 < 500ms |
 | S4.4 | 失败不静默 | 代码审查 + 单测 | 每条失败路径返回结构化 `{error}` |
 | S4.5 | 错误文案有教学性 | 断言文案 | 含原文 + 应说格式，如 `无法解析「飞象过河」（应说：牌型+点数，如 对K / 三带5 / 过）` |
 | S4.6 | 四种"过"说法 | 单测 4 例 | 均触发 `passTurn('p1')` |
 | S4.7 | 容忍标点 | 单测：`"对K。"` | 与 `"对K"` 结果一致 |
 | S4.8 | 成功返回结构化动作 | 单测断言形状 | 含目标 `Card[]` 与 `PlayType`，可供 `playCards` 消费 |
-| S4.9 | 级牌 v1 明确不支持 | 单测：构造含级牌牌型 | 返回引导性 error，**不产生错误出牌** |
+| S4.9 | 级牌 v1 不做口语级消歧 | 单测：构造含级牌牌型 | 返回引导性 error，**不产生错误出牌** |
 | S4.10 | 覆盖 v1 词表 11 牌型 | 单测：每个 `PlayType` 至少 1 例 | 全覆盖 |
 | S4.11 | **不改核心逻辑** | `git diff --stat -- src/store/` | 无输出（NFR-2.2） |
 | S4.12 | 汇入既有入口 | 代码审查 | 终点是 `playCards` / `passTurn` |
-| S4.13 | 质量门不退化 | `npm run check` | 错误数 ≤ 3 |
+| S4.13 | 质量门不退化 | `npm run check && npm test` | 错误数 ≤ 3，测试全绿 |
 
 **出口条件**：S4.1–S4.13 全过。解析器单测规模参考 skill 实测（象棋 26 用例），v1 掼蛋预计 30+ 用例。
 
@@ -265,28 +303,27 @@ function armVoiceTurn() {
 
 ---
 
-## S6 · 测试与回归
+## S6 · e2e 与回归收口
 
-**目标**：三层测试全绿，形成可重复的回归门。
+**目标**：真实语音端到端打通 + 全量回归门（S0–S5 的测试已随各自阶段存在，本阶段不再从零写）。
 
 **前置**：S1–S5
 
 **改动文件**
-- 新增 `test/test_vad.js`（VAD 状态机，Node，不依赖麦克风）
-- 新增 `test/test_parser.js`（解析器，Node，不依赖网络）
-- 新增 `test/test_asr_e2e.py`（真实语音 e2e，需 Key）
+- 新增 `test/asr_e2e.py`（真实语音 e2e，需 Key）
 - 可选 `test/e2e_smoke.spec.ts`（Playwright 浏览器冒烟）
-- `package.json` scripts：`test` / `test:e2e`
+
+**分层策略**：第 1–2 层（状态机单测、解析器单测）已在 S2–S5 随实现建立，本阶段只补第 3–4 层。
 
 **分层策略**（skill 三层都要有：只测状态机会漏端到端格式问题，只测端到端慢且不稳）
 
-**第 1 层 · 状态机单测**（合成音频，正弦波=说话、全零=静音，毫秒级）
+**第 1 层 · 状态机单测**（S3 建立）——合成音频，正弦波=说话、全零=静音，毫秒级
 - 关键 mock：`v.transcribe = async () => '对K'`（成功）/ `async () => { throw new Error('网络中断') }`（失败）/ `v.audioContext = {}`（mock 掉浏览器 API）
 - 覆盖 S3.1–S3.8
 
-**第 2 层 · 解析器单测**（构造手牌驱动，断言动作或错误关键词）
-- 覆盖矩阵：11 牌型 × 点数（含大小王）× 歧义（单 K / 双 K / 三 K）× 非法拦截（无此牌/长度不符/乱文本/空文本/级牌）
-- 覆盖 S4.1–S4.10
+**第 2 层 · 解析器单测**（S4 建立）——构造手牌驱动，断言动作或错误关键词
+- 覆盖矩阵：11 牌型 × 点数（含大小王）× 歧义 × 非法拦截（无此牌/长度不符/乱文本/空文本/级牌）
+- 规则引擎侧的契约已由 S0 的 65 例固定
 - **每修一个 bug 加一个用例**
 
 **第 3 层 · 真实语音 e2e**（走完整 HTTP 链路）
@@ -308,13 +345,13 @@ afconvert -f WAVE -d LEI16@16000 t.aiff t.wav
 
 | 编号 | 验收项 | 命令 | 期望 |
 |---|---|---|---|
-| S6.1 | 回归命令可用 | `npm test` | 全绿 |
-| S6.2 | VAD 用例数 | `npm run test:vad` | ≥ 8 例（对应 S3.1–S3.8） |
-| S6.3 | 解析器用例数 | `npm run test:parser` | ≥ 30 例，覆盖 11 牌型 |
+| S6.1 | 回归命令可用 | `npm test` | 全绿（S0–S5 累积用例 + S0 的 65 例） |
+| S6.2 | 特征与契约测试保持绿 | `npm run test:rules && npm run test:contract` | 65 例全绿 |
+| S6.3 | 解析器用例数 | `npm test` | S4 用例 ≥ 30，覆盖 11 牌型 |
 | S6.4 | 错误路径已测 | 单测断言 | 网络错/空结果/非法指令均触发 `onError` 且恢复收音 |
-| S6.5 | e2e 打通 | 有 Key 时 `npm run test:e2e` | 识别文本含预期词（用 `in` 断言） |
+| S6.5 | e2e 打通 | 有 Key 时跑 `test/asr_e2e.py` | 识别文本含预期词（用 `in` 断言） |
 | S6.6 | 无 Key 时优雅跳过 | 不设 Key 跑 e2e | skip 并打印说明，非失败 |
-| S6.7 | 质量门全绿 | `npm run check && npm run lint && npm run build` | 错误数 ≤ 基线 3，lint 无新增，build 成功 |
+| S6.7 | 质量门全绿 | `npm run check && npm run lint && npm run build && npm test` | 错误数 ≤ 基线 3，lint 无新增，build 成功，测试全绿 |
 | S6.8 | 真人实测完成 | 人工 | 至少 10 句真实语音，统计识别率并记录 |
 
 **出口条件**：S6.1–S6.8 全过。v1 交付。
