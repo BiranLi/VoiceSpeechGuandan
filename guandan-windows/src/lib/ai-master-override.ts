@@ -389,7 +389,6 @@ export const chooseMasterOverride = (args: MasterArgs, deps: MasterDeps): Card[]
     if (lateStage && c >= 3 && isBigTriple([p[0], p[0], p[0]])) return false;
     return true;
   });
-  const nonJokerSingles = safeSingles.filter((p) => p.length === 1 && p[0].suit !== 'joker');
   const naturalPairs = nonBombs.filter((p) => {
     const info = deps.memoGetPlayInfo(p);
     return !!info && info.type === PlayType.Pair && (countByValue.get(info.maxValue) || 0) >= 2;
