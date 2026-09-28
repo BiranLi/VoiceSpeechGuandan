@@ -8,11 +8,11 @@
 | 阶段 | 名称 | 对应 skill 步骤 | 依赖 | 测试先于实现 | 产出 |
 |---|---|---|---|---|---|
 | S0 | 基线固化 + 测试骨架 | — | — | — | 质量门基线、vitest、牌工厂、65 个已通过的测试 |
-| S1 | ASR 本地代理端点 | 第 1 步 | S0 | ✅ 先写契约测试 | `POST /api/asr` 可用 |
-| S2 | 浏览器录音模块 | 第 2 步 | S0 | ✅ 先写编码单测 | `recorder.ts` + 麦克风会话 |
-| S3 | VAD 自动收音 | 第 3 步 | S2 | ✅ 先写状态机单测 | 开口即录、静音自动提交 |
-| S4 | 领域指令解析器 | 第 4 步 | S1 | ✅ 契约测试**已建** | 文本 → 合法动作（工作量最大） |
-| S5 | 回合循环 + UI/无障碍 | 第 5 步 | S3, S4 | ✅ 先写守卫单测 | 完整可用闭环 |
+| S1 | ASR 本地代理端点 | 第 1 步 | S0 | ✅ 已建 | `server/asr-proxy.ts` + `vite-asr-plugin.ts`，**16 例** |
+| S2 | 浏览器录音模块 | 第 2 步 | S0 | ✅ 已建 | `src/lib/voice/recorder.ts`，**19 例** |
+| S3 | VAD 自动收音 | 第 3 步 | S2 | 待建 | 开口即录、静音自动提交 |
+| S4 | 领域指令解析器 | 第 4 步 | S1 | ✅ 契约已建 | 文本 → 合法动作（工作量最大） |
+| S5 | 回合循环 + UI/无障碍 | 第 5 步 | S3, S4 | 待建 | 完整可用闭环 |
 | S6 | e2e 与回归收口 | 第 6 步 | S1–S5 | — | 真实语音 e2e + 全量回归 |
 
 **关键路径**：S0 → S1/S2 → S3 → S4 → S5 → S6。S1 与 S2 可并行。
@@ -70,6 +70,19 @@
 
 **测试先行**：先提 `test/asr-proxy.contract.test.ts`（红），验收项 S1.1–S1.8 以该文件为准。
 
+**新增文件**
+- `server/asr-proxy.ts`：`AsrProxy` 纯逻辑（不碰 Node req/res，全部可单测）
+- `server/vite-asr-plugin.ts`：Vite 插件，只做「读 body → 调 handle → 写 res」
+- `vite.config.ts`：仅追加 `asrProxyPlugin()` 一项，未改上游既有配置
+
+**🔑 架构决策**：把代理拆成「纯逻辑 + 薄中间件」两层，而非把逻辑糊在中间件里。
+这样 16 个用例能在 node 环境直接覆盖 503/400/错误透传/超时/scheme 校验等分支，
+无需起服务器，也无需真实 Key。
+
+**安全决策**：刻意**不设** `Access-Control-Allow-Origin`。前端用相对路径 `/api/asr`
+是同源请求，浏览器不发预检也不需要该头；写成通配符 `*` 会让任意网站 POST 到用户
+本机 6677、白白消耗他的 ASR 额度（首版曾误加，已移除）。
+
 **改动文件**
 - `guandan-windows/vite.config.ts`：新增 `configureServer` 中间件（**不改**已有 `server.port`/`strictPort`/`proxy` 配置）
 - 或 `guandan-windows/server/index.js` + 在 `vite.config.ts` 的 `proxy` 增加 `/api/asr` 条目
@@ -95,8 +108,28 @@
 | S1.6 | 错误可区分 | 用无效 Key 实测 | 报错文案能区分"Key 无效"与"网络不通" |
 | S1.7 | **红线**：Key 不入库 | `git grep -nE "sk-\|Bearer [A-Za-z0-9]{20}"` | 无结果 |
 | S1.8 | **红线**：构建产物无 Key | `npm run build && grep -ri "dashscope.*key\|sk-" dist/` | 无真实 Key |
-| S1.9 | 质量门不退化 | `npm run check` | 错误数 ≤ 3（NFR-6.1） |
-| S1.10 | 端到端识别正确 | 见 S6 的 `say` 流程，先手工验一次 | "对K" 被识别为含"对"和"K"的文本 |
+| S1.9 | 质量门不退化 | `npm run check` | 错误数 ≤ 3（NFR-6.1）✅ 实测 3 |
+| S1.10 | 端到端识别正确 | 见 S6 的 `say` 流程，先手工验一次 | ⏳ **待带 Key 人工验证** |
+
+**已实测结果（无 Key 条件下）**
+
+```text
+$ curl -XPOST localhost:6677/api/asr -d '{"audio_base64":"UklGRg=="}'
+HTTP 503
+{"ok":false,"error":"服务器未配置 ASR API Key。请通过环境变量 DASHSCOPE_API_KEY 或启动参数 --asr-api-key 提供。"}
+
+$ curl localhost:6677/api/asr          # 非 POST
+HTTP 405  {"ok":false,"error":"仅支持 POST"}
+
+# 响应头确认：无 Access-Control-Allow-Origin（同源无需）
+```
+
+- ✅ S1.1 同源可达（游戏页 200，代理挂载成功）
+- ✅ S1.3 缺 Key 返 503 + 指引文案
+- ✅ S1.2 无通配 CORS 头
+- ✅ 非 POST 返 405
+- ⏳ S1.5（缺 `audio_base64` → 400）**已由单测覆盖**，但无 Key 时线上会先命中 503，故未能 curl 实测
+- ⏳ S1.6/S1.10 需真实 Key，待人工验证
 
 **出口条件**：S1.1–S1.10 全过；`DASHSCOPE_API_KEY` 由用户自行 export（**我不代配、不入库**）。
 
@@ -134,6 +167,20 @@
 | S2.7 | base64 体积符合预期 | 3s 音频实测 | ≈128KB |
 | S2.8 | 释放干净 | 结束对局后看系统麦克风指示灯 | 熄灭；track `stop()` 已调用 |
 | S2.9 | 质量门不退化 | `npm run check` | 错误数 ≤ 3 |
+
+**新增文件**：`src/lib/voice/recorder.ts`（`GuandanVoice` 类）
+
+**测试先行**：`test/recorder.test.ts`（19 例，已建并全绿）。按 skill 做法在 node 环境
+打桩浏览器 API（AudioContext / getUserMedia / fetch），不依赖真实麦克风。
+
+**已测结果**：S2.3 拒绝授权走 onError、S2.4 会话只获取一次、S2.6 WAV 编码（44 字节头 /
+16kHz / 单声道 / 16bit / 钳制不溢出）、S2.8 `stopTrack()` 与 `audioContext.close()`
+均被调用、S2.9 质量门 —— 以上均由单测覆盖并通过。
+
+⏳ **待人工验证**（需真实浏览器与麦克风，无法自动完成）：
+S2.1 采样格式实测、S2.2 首次授权弹窗、S2.5 录音不外放、S2.7 体积、S2.8 麦克风指示灯熄灭。
+
+**出口条件**：S2.1–S2.9 全过（单测部分已过，人工部分待做）。
 
 **出口条件**：S2.1–S2.9 全过。
 

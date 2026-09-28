@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
 import { traeBadgePlugin } from 'vite-plugin-trae-solo-badge';
+import { asrProxyPlugin } from './server/vite-asr-plugin';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -38,6 +39,10 @@ export default defineConfig({
     }
   },
   plugins: [
+    // ASR 本地代理：仅开发服务器生效，与游戏同端口 6677（无 CORS）。
+    // Key 从环境变量 DASHSCOPE_API_KEY 读取，缺失时 /api/asr 返 503，
+    // 游戏仍可正常点击操作。
+    asrProxyPlugin(),
     react({
       babel: {
         plugins: [
