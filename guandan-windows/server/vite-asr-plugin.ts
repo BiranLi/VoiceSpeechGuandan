@@ -1,5 +1,5 @@
 import type { Plugin } from 'vite';
-import { AsrProxy, DASHSCOPE_ENV_KEY, DEFAULT_ASR_MODEL } from './asr-proxy';
+import { AsrProxy, DASHSCOPE_ENV_KEY, DASHSCOPE_ENV_MODEL, DEFAULT_ASR_MODEL } from './asr-proxy';
 
 /**
  * 把 ASR 代理挂到 Vite 开发服务器的 /api/asr。
@@ -26,7 +26,7 @@ const readBody = (req: import('node:http').IncomingMessage): Promise<string> =>
 
 export const asrProxyPlugin = (opts: AsrPluginOptions = {}): Plugin => {
   const apiKey = opts.apiKey ?? process.env[DASHSCOPE_ENV_KEY] ?? null;
-  const model = opts.model ?? DEFAULT_ASR_MODEL;
+  const model = opts.model ?? process.env[DASHSCOPE_ENV_MODEL] ?? DEFAULT_ASR_MODEL;
 
   return {
     name: 'guandan-asr-proxy',

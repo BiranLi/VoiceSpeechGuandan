@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { AsrProxy, pickTranscribeText, assertHttps } from '../server/asr-proxy';
+import { AsrProxy, pickTranscribeText, assertHttps, DEFAULT_ASR_MODEL } from '../server/asr-proxy';
 
 /**
  * S1 · ASR 代理端点契约测试。
@@ -119,18 +119,20 @@ describe('AsrProxy.handle', () => {
     expect(content.startsWith('data:audio/wav;base64,')).toBe(true);
   });
 
-  it('模型名可配置，默认 qwen-audio-3.1-asr-flash', async () => {
+  it('模型名可配置，默认取 DEFAULT_ASR_MODEL 常量', async () => {
     const fetchImpl = okFetch(funAsrResp('x'));
     const proxy = new AsrProxy({ apiKey: 'k', fetchImpl });
     await proxy.handle({ audio_base64: WAV_B64, mime: 'audio/wav' });
-    let sent = sentJson(fetchImpl);
-    expect(sent.model).toBe('qwen-audio-3.1-asr-flash');
+    const sent = sentJson(fetchImpl);
+    // 引用常量而非硬编码字符串：换模型时只需改 asr-proxy.ts 一处
+    expect(sent.model).toBe(DEFAULT_ASR_MODEL);
+    // 已实测：-message 变体不接受内联 base64（url error），故默认必须是 -flash
+    expect(DEFAULT_ASR_MODEL).toBe('qwen-audio-3.1-asr-flash');
 
     const fetchImpl2 = okFetch(funAsrResp('x'));
     const proxy2 = new AsrProxy({ apiKey: 'k', fetchImpl: fetchImpl2, model: 'fun-asr-flash' });
     await proxy2.handle({ audio_base64: WAV_B64, mime: 'audio/wav' });
-    sent = sentJson(fetchImpl2);
-    expect(sent.model).toBe('fun-asr-flash');
+    expect(sentJson(fetchImpl2).model).toBe('fun-asr-flash');
   });
 
   it('云端返回非 200 时透传错误体，前端才能区分 Key 无效与网络不通', async () => {

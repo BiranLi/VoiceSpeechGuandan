@@ -83,6 +83,48 @@
 是同源请求，浏览器不发预检也不需要该头；写成通配符 `*` 会让任意网站 POST 到用户
 本机 6677、白白消耗他的 ASR 额度（首版曾误加，已移除）。
 
+**⚠️ 模型选型：`-message` 变体不可用（已实测回退）**
+
+曾尝试切到 `qwen-audio-3.1-asr-flash-message`，实测**三种内联形态全部被拒**：
+
+| 请求形态 | 结果 |
+|---|---|
+| `content:[{audio: "data:audio/wav;base64,…"}]` | `url error, please check url` |
+| `content:[{audio: {data: …}}]` | `url error` |
+| `content:[{audio: {url: …}}]` | `url error` |
+| OpenAI 兼容模式 `/compatible-mode/v1/chat/completions` | `Unsupported model` |
+
+结论：`-message` 需要**真实公网 http(s) 地址**，与本地代理「Base64 内联、无公网依赖」
+的架构直接冲突（同 `references/server-proxy.md` 对 `*-filetrans` 一类的结论）。
+**已回退为 `qwen-audio-3.1-asr-flash`**，并新增 `DASHSCOPE_ASR_MODEL` 环境变量，
+将来若能提供公网地址可随时切换而无需改代码。
+
+**⚠️ e2e 素材陷阱：语音名必须用全名**
+
+传短名 `say -v Flo` **不匹配**，会输出固定杂音——不同文本产生**逐位相同**的音频
+（"对K" 与 "我要出对K" 都是 0.73s / RMS 2886.2 / 峰值 16674），或纯静音
+（单字类 0.02s / RMS 0）。本机 18 个中文语音**全部已安装可用**，但必须用
+`Flo (中文（中国大陆）)` 这类全名。此坑已写进 `test/asr_e2e.py` 文件头注释。
+
+**✅ 真实语音 e2e 已跑通**（`test/asr_e2e.py`，硬失败 0）：
+
+| 原文 | 耗时 | 识别 |
+|---|---|---|
+| 过 | 0.41s | ✅ `过。` |
+| 顺子 | 0.34s | ✅ `顺子。` |
+| 三带五 | 0.66s | ✅ `3+5` |
+| 大王 | 0.57s | ⚠️ `蟹黄。`（同音误识） |
+| 炸弹 | 0.32s | ⚠️ `照见。`（同音误识） |
+| 对K | 0.43s | ⚠️ `运费。`（字母 K 被听成中文词） |
+
+延迟 0.32–0.66s，与 skill 标称 ~450ms 吻合。
+**S1.6 已实测**：无效 Key → HTTP 500 + `InvalidApiKey` 码，与网络故障可区分。
+
+🔑 **这些识别结果直接约束 S4 解析器设计**：
+- 「三带五」被识别为 `3+5` → 归一化阶段必须处理**阿拉伯数字与符号**（`+` 等）
+- 字母 `K` 稳定被听成中文词 → 需**云端热词**或改用口语说法（如「老K」）；这是 skill
+  标注的「数字/字母是重灾区」的真实体现
+
 **改动文件**
 - `guandan-windows/vite.config.ts`：新增 `configureServer` 中间件（**不改**已有 `server.port`/`strictPort`/`proxy` 配置）
 - 或 `guandan-windows/server/index.js` + 在 `vite.config.ts` 的 `proxy` 增加 `/api/asr` 条目
@@ -109,7 +151,7 @@
 | S1.7 | **红线**：Key 不入库 | `git grep -nE "sk-\|Bearer [A-Za-z0-9]{20}"` | 无结果 |
 | S1.8 | **红线**：构建产物无 Key | `npm run build && grep -ri "dashscope.*key\|sk-" dist/` | 无真实 Key |
 | S1.9 | 质量门不退化 | `npm run check` | 错误数 ≤ 3（NFR-6.1）✅ 实测 3 |
-| S1.10 | 端到端识别正确 | 见 S6 的 `say` 流程，先手工验一次 | ⏳ **待带 Key 人工验证** |
+| S1.10 | 端到端识别正确 | `python3 test/asr_e2e.py` | ✅ **已实测通过**（硬失败 0） |
 
 **已实测结果（无 Key 条件下）**
 

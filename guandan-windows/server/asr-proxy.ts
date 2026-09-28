@@ -10,6 +10,17 @@
  */
 
 export const DASHSCOPE_ENV_KEY = 'DASHSCOPE_API_KEY';
+export const DASHSCOPE_ENV_MODEL = 'DASHSCOPE_ASR_MODEL';
+/**
+ * 默认模型。
+ *
+ * 注意：qwen-audio-3.1-asr-flash-message 经实测**不接受内联 base64**，
+ * dataURL / {data} / {url} 三种形态均返回 `url error`，且不支持
+ * OpenAI 兼容模式——它需要真实公网 http(s) 地址，与本地代理架构冲突
+ * （同 references/server-proxy.md 中对 *-filetrans 一类的结论）。
+ * 因此默认用可内联上传的 -flash；如有公网地址可用
+ * DASHSCOPE_ASR_MODEL 环境变量覆盖。
+ */
 export const DEFAULT_ASR_MODEL = 'qwen-audio-3.1-asr-flash';
 export const DASHSCOPE_NATIVE_URL =
   'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
